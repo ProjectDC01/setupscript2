@@ -1,0 +1,121 @@
+grub.cfg
+
+menuentry 'Install Rocky Linux 8.10 Kickstart(ICE)' --class fedora --class gnu-linux --class gnu --class os {
+	linuxefi /images/pxeboot/vmlinuz inst.repo=hd:LABEL=ROCKY-8-10- inst.ks=hd:sda1:/ks.cfg quiet
+	initrdefi /images/pxeboot/initrd.img
+}
+
+ks.cfg
+
+#version=RHEL8
+# Use graphical install
+graphical
+
+repo --name="AppStream" --baseurl=file:///run/install/sources/mount-0000-hdd-device/AppStream
+
+%packages
+@^server-product-environment
+kexec-tools
+langpacks-ja
+tuned
+-cockpit
+%end
+
+# Keyboard layouts
+keyboard jp106
+# System language
+lang en_US.UTF-8
+
+# Network information
+network  --hostname=localhost.localdomain
+
+# Use hard drive installation media
+harddrive --dir= --partition=LABEL=ROCKY-8-10-
+
+# Run the Setup Agent on first boot
+firstboot --enable
+
+ignoredisk --only-use=mmcblk0
+# Partition clearing information
+clearpart --drives=mmcblk0 --all
+# Disk partitioning information
+autopart
+
+# System timezone
+timezone --utc Asia/Tokyo
+
+# Root password
+rootpw changeme!
+
+%anaconda
+pwpolicy root --minlen=6 --minquality=1 --notstrict --nochanges --notempty
+pwpolicy user --minlen=6 --minquality=1 --notstrict --nochanges --emptyok
+pwpolicy luks --minlen=6 --minquality=1 --notstrict --nochanges --notempty
+%end
+
+services --enabled=firewalld,chronyd
+shutdown
+
+%post
+cat << 'EOF' > /etc/resolv.conf
+nameserver 8.8.8.8
+nameserver 1.1.1.1
+EOF
+
+# Add elrepo&epel Repository
+dnf -y install epel-release
+systemctl enable fail2ban
+
+# ntp
+sed -i 's/^pool.*iburst$/server ntp.nict.jp iburst/' /etc/chrony.conf
+
+# fail2ban
+dnf -y install fail2ban --enablerepo=epel
+systemctl enable fail2ban
+touch /var/log/fail2ban.log
+sed -i -E 's/^(logtarget =).*/\1 \/var\/log\/fail2ban.log/' /etc/fail2ban/fail2ban.conf
+
+# fail2ban local.conf
+cat <<'EOL' >/etc/fail2ban/jail.d/local.conf
+[sshd]
+enabled = true
+EOL
+
+# DNF
+echo 'fastestmirror=true' >> /etc/dnf/dnf.conf
+
+# yum update
+dnf -y clean all
+dnf -y update
+
+# remove machine-id
+cat /dev/null > /etc/machine-id
+cat /dev/null > /var/lib/dbus/machine-id
+
+HOSTNAME=NTT`date '+%Y-%m-%d-%H-%M-%S'`.ntt
+sudo hostnamectl set-hostname $HOSTNAME
+
+sshpass -p 'changeme!'  scp -o "StrictHostKeyChecking=no" root@changeme!:~/pelinux_amd64_100.rpm ./
+sudo sed -i "s/;REGISTRATION_SERVER_ADDRESS rs_address/REGISTRATION_SERVER_ADDRESS changeme!/" /usr/local/Ixia/endpoint.ini
+
+cat << EOF > /etc/systemd/system/ICEndpoint.service
+[Unit]
+Description=IxChariotEndpoint
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/Ixia/endpoint -n
+WorkingDirectory=/usr/local/Ixia
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now ICEndpoint.service
+
+%end
