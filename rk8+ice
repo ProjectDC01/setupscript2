@@ -7,45 +7,34 @@ menuentry 'Install Rocky Linux 8.10 Kickstart(ICE)' --class fedora --class gnu-l
 
 ks.cfg
 
-#version=RHEL8
-# Use graphical install
-graphical
+# text mode install
+text
+skipx
 
-repo --name="AppStream" --baseurl=file:///run/install/sources/mount-0000-hdd-device/AppStream
-
+# install packages
 %packages
-@^server-product-environment
+@^minimal-environment
 kexec-tools
 langpacks-ja
 tuned
+git
 -cockpit
 %end
 
-# Keyboard layouts
+# settings
 keyboard jp106
-# System language
 lang en_US.UTF-8
-
-# Network information
-network  --hostname=localhost.localdomain
-
-# Use hard drive installation media
+network --bootproto=dhcp --device=link --activate --onboot=on
 harddrive --dir= --partition=LABEL=ROCKY-8-10-
-
-# Run the Setup Agent on first boot
-firstboot --enable
-
-ignoredisk --only-use=mmcblk0
-# Partition clearing information
-clearpart --drives=mmcblk0 --all
-# Disk partitioning information
-autopart
-
-# System timezone
+firstboot --disable
+eula --agreed
 timezone --utc Asia/Tokyo
-
-# Root password
 rootpw changeme!
+
+# storage settings
+ignoredisk --only-use=mmcblk0
+clearpart --drives=mmcblk0 --all
+autopart --type=lvm --nohome
 
 %anaconda
 pwpolicy root --minlen=6 --minquality=1 --notstrict --nochanges --notempty
@@ -53,21 +42,18 @@ pwpolicy user --minlen=6 --minquality=1 --notstrict --nochanges --emptyok
 pwpolicy luks --minlen=6 --minquality=1 --notstrict --nochanges --notempty
 %end
 
-services --enabled=firewalld,chronyd
-shutdown
+reboot
 
-%post
-cat << 'EOF' > /etc/resolv.conf
-nameserver 8.8.8.8
-nameserver 1.1.1.1
-EOF
+%post --log=/root/post.log
+# DNF
+echo 'fastestmirror=true' >> /etc/dnf/dnf.conf
+
+# yum update
+dnf -y clean all
+# dnf -y update
 
 # Add elrepo&epel Repository
 dnf -y install epel-release
-systemctl enable fail2ban
-
-# ntp
-sed -i 's/^pool.*iburst$/server ntp.nict.jp iburst/' /etc/chrony.conf
 
 # fail2ban
 dnf -y install fail2ban --enablerepo=epel
@@ -76,29 +62,30 @@ touch /var/log/fail2ban.log
 sed -i -E 's/^(logtarget =).*/\1 \/var\/log\/fail2ban.log/' /etc/fail2ban/fail2ban.conf
 
 # fail2ban local.conf
-cat <<'EOL' >/etc/fail2ban/jail.d/local.conf
+sudo tee /etc/fail2ban/jail.d/local.conf <<EOF
 [sshd]
 enabled = true
-EOL
+EOF
 
-# DNF
-echo 'fastestmirror=true' >> /etc/dnf/dnf.conf
-
-# yum update
-dnf -y clean all
-dnf -y update
+# ntp
+sed -i 's/^pool.*iburst$/server ntp.nict.jp iburst/' /etc/chrony.conf
+systemctl enable chronyd
 
 # remove machine-id
 cat /dev/null > /etc/machine-id
 cat /dev/null > /var/lib/dbus/machine-id
 
-HOSTNAME=NTT`date '+%Y-%m-%d-%H-%M-%S'`.ntt
-sudo hostnamectl set-hostname $HOSTNAME
+# Set Hostname
+sudo hostnamectl set-hostname `date '+%Y-%m-%d-%H-%M-%S'`.dns
 
+# ICE Setup
+dnf -y install sshpass
 sshpass -p 'changeme!'  scp -o "StrictHostKeyChecking=no" root@changeme!:~/pelinux_amd64_100.rpm ./
+dnf -y install ./pelinux_amd64_100.rpm
 sudo sed -i "s/;REGISTRATION_SERVER_ADDRESS rs_address/REGISTRATION_SERVER_ADDRESS changeme!/" /usr/local/Ixia/endpoint.ini
 
-cat << EOF > /etc/systemd/system/ICEndpoint.service
+# ICE Service Setup
+sudo tee /etc/systemd/system/ICEndpoint.service <<EOF
 [Unit]
 Description=IxChariotEndpoint
 After=network.target
@@ -115,7 +102,8 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable --now ICEndpoint.service
+sudo systemctl enable ICEndpoint
+
+shutdown now
 
 %end
