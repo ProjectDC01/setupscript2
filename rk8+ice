@@ -14,6 +14,7 @@ skipx
 # install packages
 %packages
 @^minimal-environment
+#@^server-product-environment
 kexec-tools
 langpacks-ja
 tuned
@@ -48,9 +49,14 @@ reboot
 # DNF
 echo 'fastestmirror=true' >> /etc/dnf/dnf.conf
 
+# hostname
+sudo tee /etc/hostname <<EOF
+`date '+%Y-%m-%d-%H-%M-%S'`.ntt
+EOF
+
 # yum update
 dnf -y clean all
-# dnf -y update
+#dnf -y update
 
 # Add elrepo&epel Repository
 dnf -y install epel-release
@@ -74,9 +80,6 @@ systemctl enable chronyd
 # remove machine-id
 cat /dev/null > /etc/machine-id
 cat /dev/null > /var/lib/dbus/machine-id
-
-# Set Hostname
-sudo hostnamectl set-hostname `date '+%Y-%m-%d-%H-%M-%S'`.dns
 
 # ICE Setup
 dnf -y install sshpass
@@ -103,7 +106,5 @@ WantedBy=multi-user.target
 EOF
 
 sudo systemctl enable ICEndpoint
-
-shutdown now
 
 %end
